@@ -20,8 +20,9 @@ func GetWinsize(fd uintptr) (*Winsize, error) {
 	if err != nil {
 		return nil, err
 	}
-	ws.Height = uint16(info.srWindow.Right - info.srWindow.Left + 1)
-	ws.Width = uint16(info.srWindow.Bottom - info.srWindow.Top + 1)
+
+	ws.Width = uint16(info.Window.Right - info.Window.Left + 1)
+	ws.Height = uint16(info.Window.Bottom - info.Window.Top + 1)
 
 	ws.x = 0 // todo azlinux -- this is the pixel size of the Window, and not currently used by any caller
 	ws.y = 0
@@ -80,7 +81,9 @@ func MakeRaw(fd uintptr) (*State, error) {
 	}
 
 	// see http://msdn.microsoft.com/en-us/library/windows/desktop/ms683462(v=vs.85).aspx for these flag settings
-	state.mode &^= (ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT)
+	//state.mode &^= (ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT)
+	// TODO: Clearing the flag seems to work
+	state.mode = 0
 	err = SetConsoleMode(fd, state.mode)
 	if err != nil {
 		return nil, err

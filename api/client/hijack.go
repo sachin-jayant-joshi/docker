@@ -161,6 +161,7 @@ func (cli *DockerCli) hijack(method, path string, setRawTerminal bool, in io.Rea
 
 	var oldState *term.State
 
+	consoleAdapter := term.NewTerminal(stdout, stderr, in)
 	if in != nil && setRawTerminal && cli.isTerminalIn && os.Getenv("NORAW") == "" {
 		oldState, err = term.SetRawTerminal(cli.inFd)
 		if err != nil {
@@ -187,9 +188,9 @@ func (cli *DockerCli) hijack(method, path string, setRawTerminal bool, in io.Rea
 
 			// When TTY is ON, use regular copy
 			if setRawTerminal && stdout != nil {
-				_, err = io.Copy(stdout, br)
+				_, err = io.Copy(consoleAdapter.StdOut, br)
 			} else {
-				_, err = stdcopy.StdCopy(stdout, stderr, br)
+				_, err = stdcopy.StdCopy(consoleAdapter.StdOut, consoleAdapter.StdErr, br)
 			}
 			log.Debugf("[hijack] End of stdout")
 			return err
@@ -198,7 +199,7 @@ func (cli *DockerCli) hijack(method, path string, setRawTerminal bool, in io.Rea
 
 	sendStdin := promise.Go(func() error {
 		if in != nil {
-			io.Copy(rwc, in)
+			io.Copy(rwc, consoleAdapter.StdIn)
 			log.Debugf("[hijack] End of stdin")
 		}
 
