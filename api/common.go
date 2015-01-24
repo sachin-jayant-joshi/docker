@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"mime"
 	"os"
+<<<<<<< HEAD
+=======
+	// Pending pull request https://github.com/docker/docker/pull/10323
+>>>>>>> Fixing filepath issue, replacing some magic numbers/values with const
 	"path/filepath"
 	"strings"
 

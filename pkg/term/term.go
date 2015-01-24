@@ -25,6 +25,14 @@ type Winsize struct {
 	y      uint16
 }
 
+func NewTerminal(stdOut io.Writer, stdErr io.Writer, stdIn io.Reader) *Terminal {
+	return &Terminal{
+		StdOut: stdOut,
+		StdErr: stdErr,
+		StdIn:  stdIn,
+	}
+}
+
 func GetWinsize(fd uintptr) (*Winsize, error) {
 	ws := &Winsize{}
 	_, _, err := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(ws)))
