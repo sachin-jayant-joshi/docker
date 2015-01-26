@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"mime"
 	"os"
-	// Pending pull request https://github.com/docker/docker/pull/10323
 	"path/filepath"
 	"strings"
 
