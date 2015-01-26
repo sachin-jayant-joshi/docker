@@ -478,7 +478,7 @@ func (term *WindowsTerminal) HandleOutputCommand(command []byte) (n int, err err
 	parsedCommand := parseAnsiCommand(command)
 
 	// use appropriate handle
-	handle, _ := syscall.GetStdHandle(-11)
+	handle, _ := syscall.GetStdHandle(STD_OUTPUT_HANDLE)
 
 	switch parsedCommand.Command {
 	case "m":
@@ -729,6 +729,17 @@ const (
 	SHIFT_PRESSED      = 0x0010 // The SHIFT key is pressed.
 )
 
+const (
+	KEY_CONTROL_PARAM_2 = ";2"
+	KEY_CONTROL_PARAM_3 = ";3"
+	KEY_CONTROL_PARAM_4 = ";4"
+	KEY_CONTROL_PARAM_5 = ";5"
+	KEY_CONTROL_PARAM_6 = ";6"
+	KEY_CONTROL_PARAM_7 = ";7"
+	KEY_CONTROL_PARAM_8 = ";8"
+	KEY_ESC_N           = "\x1BN"
+)
+
 var keyMapPrefix = map[WORD]string{
 	VK_UP:     "\x1B[%sA",
 	VK_DOWN:   "\x1B[%sB",
@@ -754,25 +765,25 @@ var keyMapPrefix = map[WORD]string{
 
 func getControlStateParameter(shift, alt, control, meta bool) string {
 	if shift && alt && control {
-		return ";8"
+		return KEY_CONTROL_PARAM_8
 	}
 	if alt && control {
-		return ";7"
+		return KEY_CONTROL_PARAM_7
 	}
 	if shift && control {
-		return ";6"
+		return KEY_CONTROL_PARAM_6
 	}
 	if control {
-		return ";5"
+		return KEY_CONTROL_PARAM_5
 	}
 	if shift && alt {
-		return ";4"
+		return KEY_CONTROL_PARAM_4
 	}
 	if alt {
-		return ";3"
+		return KEY_CONTROL_PARAM_3
 	}
 	if shift {
-		return ";2"
+		return KEY_CONTROL_PARAM_2
 	}
 	return ""
 }
@@ -801,6 +812,7 @@ func mapKeystokeToTerminalString(keyEvent *KEY_EVENT_RECORD) string {
 		return charSequenceForKeys(keyEvent.VirtualKeyCode, keyEvent.ControlKeyState)
 	}
 	if control {
+		// TODO(azlinux):
 		// <Ctrl>-D  Signals the end of input from the keyboard; also exits current shell.
 		// <Ctrl>-H  Deletes the first character to the left of the cursor. Also called the ERASE key.
 		// <Ctrl>-Q  Restarts printing after it has been stopped with <Ctrl>-s.
@@ -811,13 +823,13 @@ func mapKeystokeToTerminalString(keyEvent *KEY_EVENT_RECORD) string {
 	}
 	// <Alt>+Key generates ESC N Key
 	if !control && alt {
-		return "\x1BN" + strings.ToLower(string(keyEvent.UnicodeChar))
+		return KEY_ESC_N + strings.ToLower(string(keyEvent.UnicodeChar))
 	}
 	return string(keyEvent.UnicodeChar)
 }
 
 func (term *WindowsTerminal) ReadChars(w io.Reader, p []byte) (n int, err error) {
-	handle, _ := syscall.GetStdHandle(-10)
+	handle, _ := syscall.GetStdHandle(STD_INPUT_HANDLE)
 	if nil != err {
 		return 0, err
 	}
@@ -873,6 +885,6 @@ func assert(cond bool, format string, a ...interface{}) {
 
 func marshal(c COORD) uint32 {
 	// works only on intel-endian machines
-	// TODO : make it so that it does not fail
+	// TODO(azlinux): make it so that it does not fail
 	return uint32(uint32(uint16(c.Y))<<16 | uint32(uint16(c.X)))
 }

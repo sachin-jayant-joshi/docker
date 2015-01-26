@@ -4,14 +4,7 @@ package term
 
 import (
 	"fmt"
-	//"io"
 	"testing"
-	//"testing/iotest"
-	//"bytes"
-	//"testing/quick"
-	//"strconv"
-	//"strings"
-	//"syscall"
 )
 
 func helpsTestParseInt16OrDefault(t *testing.T, expectedValue int16, shouldFail bool, input string, defaultValue int16, format string, args ...string) {
