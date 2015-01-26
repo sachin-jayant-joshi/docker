@@ -88,7 +88,7 @@ func (graph *Graph) Exists(id string) bool {
 func (graph *Graph) Get(name string) (*image.Image, error) {
 	id, err := graph.idIndex.Get(name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not find image: %v", err)
 	}
 	img, err := image.LoadImage(graph.ImageRoot(id))
 	if err != nil {
@@ -196,7 +196,7 @@ func (graph *Graph) Register(img *image.Image, layerData archive.ArchiveReader) 
 //   The archive is stored on disk and will be automatically deleted as soon as has been read.
 //   If output is not nil, a human-readable progress bar will be written to it.
 //   FIXME: does this belong in Graph? How about MktempFile, let the caller use it for archives?
-func (graph *Graph) TempLayerArchive(id string, compression archive.Compression, sf *utils.StreamFormatter, output io.Writer) (*archive.TempArchive, error) {
+func (graph *Graph) TempLayerArchive(id string, sf *utils.StreamFormatter, output io.Writer) (*archive.TempArchive, error) {
 	image, err := graph.Get(id)
 	if err != nil {
 		return nil, err

@@ -1,12 +1,18 @@
+// +build daemon
+
 package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/docker/libtrust"
 )
 
 func TestDaemonRestartWithRunningContainersPorts(t *testing.T) {
@@ -66,7 +72,7 @@ func TestDaemonRestartWithVolumesRefs(t *testing.T) {
 	if err := d.Restart(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Cmd("run", "-d", "--volumes-from", "volrestarttest1", "--name", "volrestarttest2", "busybox"); err != nil {
+	if _, err := d.Cmd("run", "-d", "--volumes-from", "volrestarttest1", "--name", "volrestarttest2", "busybox", "top"); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := d.Cmd("rm", "-fv", "volrestarttest2"); err != nil {
@@ -283,4 +289,117 @@ func TestDaemonLoggingLevel(t *testing.T) {
 	}
 
 	logDone("daemon - Logging Level")
+}
+
+func TestDaemonAllocatesListeningPort(t *testing.T) {
+	listeningPorts := [][]string{
+		{"0.0.0.0", "0.0.0.0", "5678"},
+		{"127.0.0.1", "127.0.0.1", "1234"},
+		{"localhost", "127.0.0.1", "1235"},
+	}
+
+	cmdArgs := []string{}
+	for _, hostDirective := range listeningPorts {
+		cmdArgs = append(cmdArgs, "--host", fmt.Sprintf("tcp://%s:%s", hostDirective[0], hostDirective[2]))
+	}
+
+	d := NewDaemon(t)
+	if err := d.StartWithBusybox(cmdArgs...); err != nil {
+		t.Fatalf("Could not start daemon with busybox: %v", err)
+	}
+	defer d.Stop()
+
+	for _, hostDirective := range listeningPorts {
+		output, err := d.Cmd("run", "-p", fmt.Sprintf("%s:%s:80", hostDirective[1], hostDirective[2]), "busybox", "true")
+		if err == nil {
+			t.Fatalf("Container should not start, expected port already allocated error: %q", output)
+		} else if !strings.Contains(output, "port is already allocated") {
+			t.Fatalf("Expected port is already allocated error: %q", output)
+		}
+	}
+
+	logDone("daemon - daemon listening port is allocated")
+}
+
+// #9629
+func TestDaemonVolumesBindsRefs(t *testing.T) {
+	d := NewDaemon(t)
+
+	if err := d.StartWithBusybox(); err != nil {
+		t.Fatal(err)
+	}
+
+	tmp, err := ioutil.TempDir(os.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+
+	if err := ioutil.WriteFile(tmp+"/test", []byte("testing"), 0655); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := d.Cmd("create", "-v", tmp+":/foo", "--name=voltest", "busybox"); err != nil {
+		t.Fatal(err, out)
+	}
+
+	if err := d.Restart(); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := d.Cmd("run", "--volumes-from=voltest", "--name=consumer", "busybox", "/bin/sh", "-c", "[ -f /foo/test ]"); err != nil {
+		t.Fatal(err, out)
+	}
+
+	logDone("daemon - bind refs in data-containers survive daemon restart")
+}
+
+func TestDaemonKeyGeneration(t *testing.T) {
+	// TODO: skip or update for Windows daemon
+	os.Remove("/etc/docker/key.json")
+	d := NewDaemon(t)
+	if err := d.Start(); err != nil {
+		t.Fatalf("Could not start daemon: %v", err)
+	}
+	d.Stop()
+
+	k, err := libtrust.LoadKeyFile("/etc/docker/key.json")
+	if err != nil {
+		t.Fatalf("Error opening key file")
+	}
+	kid := k.KeyID()
+	// Test Key ID is a valid fingerprint (e.g. QQXN:JY5W:TBXI:MK3X:GX6P:PD5D:F56N:NHCS:LVRZ:JA46:R24J:XEFF)
+	if len(kid) != 59 {
+		t.Fatalf("Bad key ID: %s", kid)
+	}
+
+	logDone("daemon - key generation")
+}
+
+func TestDaemonKeyMigration(t *testing.T) {
+	// TODO: skip or update for Windows daemon
+	os.Remove("/etc/docker/key.json")
+	k1, err := libtrust.GenerateECP256PrivateKey()
+	if err != nil {
+		t.Fatalf("Error generating private key: %s", err)
+	}
+	if err := libtrust.SaveKey(filepath.Join(os.Getenv("HOME"), ".docker", "key.json"), k1); err != nil {
+		t.Fatalf("Error saving private key: %s", err)
+	}
+
+	d := NewDaemon(t)
+	if err := d.Start(); err != nil {
+		t.Fatalf("Could not start daemon: %v", err)
+	}
+	d.Stop()
+
+	k2, err := libtrust.LoadKeyFile("/etc/docker/key.json")
+	if err != nil {
+		t.Fatalf("Error opening key file")
+	}
+	if k1.KeyID() != k2.KeyID() {
+		t.Fatalf("Key not migrated")
+	}
+
+	logDone("daemon - key migration")
 }
