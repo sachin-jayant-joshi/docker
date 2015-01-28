@@ -85,6 +85,8 @@ const (
 	STD_INPUT_HANDLE  = -10
 	STD_OUTPUT_HANDLE = -11
 	STD_ERROR_HANDLE  = -12
+
+	MAX_INPUT_BUFFER = 1024
 )
 
 // http://msdn.microsoft.com/en-us/library/windows/desktop/dd375731(v=vs.85).aspx
@@ -148,7 +150,7 @@ type (
 		Y SHORT
 	}
 
-	BOOL  int
+	BOOL  int32
 	WORD  uint16
 	WCHAR uint16
 	DWORD uint32
@@ -184,12 +186,15 @@ type (
 
 // Implements the TerminalEmulator interface
 type WindowsTerminal struct {
-	outMutex sync.Mutex
-	inMutex  sync.Mutex
+	outMutex    sync.Mutex
+	inMutex     sync.Mutex
+	inputBuffer []byte
 }
 
 func NewTerminal(stdOut io.Writer, stdErr io.Writer, stdIn io.Reader) *Terminal {
-	handler := &WindowsTerminal{}
+	handler := &WindowsTerminal{
+		inputBuffer: make([]byte, 0, MAX_INPUT_BUFFER),
+	}
 	return &Terminal{
 		StdOut: &terminalWriter{
 			wrappedWriter: stdOut,
@@ -828,46 +833,71 @@ func mapKeystokeToTerminalString(keyEvent *KEY_EVENT_RECORD) string {
 	return string(keyEvent.UnicodeChar)
 }
 
-func (term *WindowsTerminal) ReadChars(w io.Reader, p []byte) (n int, err error) {
+func getAvailableInputEvents() (inputEvents []INPUT_RECORD, err error) {
 	handle, _ := syscall.GetStdHandle(STD_INPUT_HANDLE)
 	if nil != err {
-		return 0, err
+		return nil, err
 	}
-	// Read number of console events available
-	nEvents, err := getNumberOfConsoleInputEvents(uintptr(handle))
-	if nil != err {
-		return 0, err
-	}
-	if 0 == nEvents {
-		return 0, nil
-	}
-	// Read the keystrokes
-	inputBuffer := make([]INPUT_RECORD, int(nEvents)+1)
-	nr, err := readConsoleInputKey(uintptr(handle), inputBuffer)
-	if nil != err {
-		return 0, err
-	}
-	if 0 == nr {
-		return 0, nil
-	}
-	// Process the keystrokes
-	charIndex := 0
-	for i := 0; i < nr; i++ {
-		input := inputBuffer[i]
-		if input.EventType == KEY_EVENT && input.KeyEvent.KeyDown == 1 {
-			keyString := mapKeystokeToTerminalString(&input.KeyEvent)
-			if len(keyString) > 0 {
-				for _, e := range keyString {
-					p[charIndex] = byte(e)
-					charIndex++
-				}
+	for {
+		// Read number of console events available
+		nEvents, err := getNumberOfConsoleInputEvents(uintptr(handle))
+		if nil != err {
+			return nil, err
+		}
+		if 0 < nEvents {
+			tempBuffer := make([]INPUT_RECORD, int(nEvents))
+			nr, err := readConsoleInputKey(uintptr(handle), tempBuffer)
+			if nil != err {
+				return nil, err
+			}
+			if 0 < nr {
+				return tempBuffer[:nr], nil
 			}
 		}
-		if charIndex >= len(p) && charIndex > 0 {
-			break
+	}
+	return nil, nil
+}
+
+func getTranslatedKeyCodes(inputEvents []INPUT_RECORD) string {
+	assert(len(inputEvents) > 0, "Input events can not be empty array")
+	retValue := ""
+	for i := 0; i < len(inputEvents); i++ {
+		input := inputEvents[i]
+		if input.EventType == KEY_EVENT && input.KeyEvent.KeyDown != 0 {
+			keyString := mapKeystokeToTerminalString(&input.KeyEvent)
+			retValue = retValue + keyString
+		}
+
+	}
+	return retValue
+}
+
+func (term *WindowsTerminal) ReadChars(w io.Reader, p []byte) (n int, err error) {
+	n = 0
+	for {
+		if len(term.inputBuffer) == 0 {
+			inputEvents, err := getAvailableInputEvents()
+			if nil != err {
+				return 0, err
+			}
+			keyCodes := getTranslatedKeyCodes(inputEvents)
+			term.inputBuffer = []byte(keyCodes)
+
+		} else {
+			for n = 0; n < len(p) && n < len(term.inputBuffer); n++ {
+				p[n] = term.inputBuffer[n]
+			}
+			if len(p) < len(term.inputBuffer) {
+				term.inputBuffer = term.inputBuffer[n:]
+			} else {
+				term.inputBuffer = term.inputBuffer[:0]
+			}
+			if n > 0 {
+				break
+			}
 		}
 	}
-	return charIndex, nil
+	return n, nil
 }
 
 func (term *WindowsTerminal) HandleInputSequence(command []byte) (n int, err error) {
