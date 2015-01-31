@@ -80,9 +80,11 @@ func MakeRaw(fd uintptr) (*State, error) {
 		return nil, err
 	}
 
-	// see http://msdn.microsoft.com/en-us/library/windows/desktop/ms683462(v=vs.85).aspx for these flag settings
-	//state.mode &^= (ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT)
-	// TODO: Clearing the flag seems to work
+	// https://msdn.microsoft.com/en-us/library/windows/desktop/ms683462(v=vs.85).aspx
+	// All three input modes, along with processed output mode, are designed to work together.
+	// It is best to either enable or disable all of these modes as a group.
+	// When all are enabled, the application is said to be in "cooked" mode, which means that most of the processing is handled for the application.
+	// When all are disabled, the application is in "raw" mode, which means that input is unfiltered and any processing is left to the application.
 	state.mode = 0
 	err = SetConsoleMode(fd, state.mode)
 	if err != nil {

@@ -22,6 +22,7 @@ const (
 	ANSI_CMD_DECPAM       = '='
 	ANSI_CMD_OSC          = ']'
 	ANSI_CMD_STR_TERM     = '\\'
+	ANSI_BEL              = 0x07
 	KEY_EVENT             = 1
 )
 
@@ -61,12 +62,26 @@ func isAnsiCommandChar(b byte) bool {
 	if b == ANSI_CMD_G1 || b == ANSI_CMD_OSC || b == ANSI_CMD_DECPAM || b == ANSI_CMD_DECPNM {
 		return true
 	}
+	if b == ANSI_CMD_STR_TERM || b == ANSI_BEL {
+		return true
+	}
 	return false
 }
 
 func isCharacterSelectionCmdChar(b byte) bool {
 	if b == ANSI_CMD_G0 || b == ANSI_CMD_G1 || b == ANSI_CMD_G2 || b == ANSI_CMD_G3 {
 		return true
+	}
+	return false
+}
+
+func isXtermOscSequence(command []byte, current byte) bool {
+	if len(command) >= 2 {
+		if command[0] == ANSI_ESCAPE_PRIMARY && command[1] == ANSI_CMD_OSC {
+			if current != ANSI_BEL {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -84,19 +99,21 @@ func (tw *terminalWriter) Write(p []byte) (n int, err error) {
 			// inside escape sequence
 			tw.command = append(tw.command, p[current])
 			if isAnsiCommandChar(p[current]) {
-				// found the last command character.
-				// Now we have a complete command.
-				nchar, err := tw.emulator.HandleOutputCommand(tw.command)
-				totalWritten += nchar
-				if err != nil {
-					return totalWritten, err
-				}
+				if !isXtermOscSequence(tw.command, p[current]) {
+					// found the last command character.
+					// Now we have a complete command.
+					nchar, err := tw.emulator.HandleOutputCommand(tw.command)
+					totalWritten += nchar
+					if err != nil {
+						return totalWritten, err
+					}
 
-				// clear the command
-				// don't include current character again
-				tw.command = tw.command[:0]
-				start = current + 1
-				tw.inSequence = false
+					// clear the command
+					// don't include current character again
+					tw.command = tw.command[:0]
+					start = current + 1
+					tw.inSequence = false
+				}
 			}
 		} else {
 			if p[current] == ANSI_ESCAPE_PRIMARY {
