@@ -153,7 +153,7 @@ func onlyBackground(flag WORD) WORD {
 }
 
 func helpsTestGetWindowsTextAttributeForAnsiValue(t *testing.T, oldValue WORD /*, expected WORD*/, ansi int16, onlyMask WORD, restMask WORD) WORD {
-	actual, err := getWindowsTextAttributeForAnsiValue(oldValue, ansi)
+	actual, err := getWindowsTextAttributeForAnsiValue(oldValue, FOREGROUND_MASK_SET, ansi)
 	assertTrue(t, nil == err, "Should be no error")
 	// assert that other bits are not affected
 	if 0 != oldValue {

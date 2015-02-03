@@ -480,20 +480,18 @@ func readConsoleInputKey(fileDesc uintptr, inputBuffer []INPUT_RECORD) (int, err
 	return int(0), err
 }
 
-func getWindowsTextAttributeForAnsiValue(originalFlag WORD, ansiValue int16) (WORD, error) {
+func getWindowsTextAttributeForAnsiValue(originalFlag WORD, defaultValue WORD, ansiValue int16) (WORD, error) {
 	flag := WORD(originalFlag)
 	if flag == 0 {
-		// TODO - confirm this is the correct expectation
-		flag = FOREGROUND_MASK_SET
+		flag = defaultValue
 	}
 	switch ansiValue {
 	case ANSI_ATTR_RESET:
 		flag &^= COMMON_LVB_UNDERSCORE
 		flag &^= BACKGROUND_INTENSITY
 		flag = flag | FOREGROUND_INTENSITY
-		// TODO: how do you reset reverse?
 	case ANSI_ATTR_INVISIBLE:
-		// TODO ??
+		// TODO: how do you reset reverse?
 	case ANSI_ATTR_UNDERLINE:
 		flag = flag | COMMON_LVB_UNDERSCORE
 	case ANSI_ATTR_BLINK:
@@ -516,7 +514,7 @@ func getWindowsTextAttributeForAnsiValue(originalFlag WORD, ansiValue int16) (WO
 
 	// FOREGROUND
 	case ANSI_FOREGROUND_DEFAULT:
-		flag = flag | FOREGROUND_MASK_SET
+		flag = (flag & FOREGROUND_MASK_UNSET) | (defaultValue & FOREGROUND_MASK_SET)
 	case ANSI_FOREGROUND_BLACK:
 		flag = flag ^ (FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE)
 	case ANSI_FOREGROUND_RED:
@@ -537,7 +535,7 @@ func getWindowsTextAttributeForAnsiValue(originalFlag WORD, ansiValue int16) (WO
 	// Background
 	case ANSI_BACKGROUND_DEFAULT:
 		// Black with no intensity
-		flag = (flag & BACKGROUND_MASK_UNSET)
+		flag = (flag & BACKGROUND_MASK_UNSET) | (defaultValue & BACKGROUND_MASK_SET)
 	case ANSI_BACKGROUND_BLACK:
 		flag = (flag & BACKGROUND_MASK_UNSET)
 	case ANSI_BACKGROUND_RED:
@@ -589,10 +587,10 @@ func (term *WindowsTerminal) HandleOutputCommand(command []byte) (n int, err err
 		flag := screenBufferInfo.Attributes
 		for _, e := range parsedCommand.Parameters {
 			value, _ := strconv.ParseInt(e, 10, 16) // base 10, 16 bit
-			if value == 0 {
+			if value == ANSI_ATTR_RESET {
 				flag = term.screenBufferInfo.Attributes // reset
 			} else {
-				flag, err = getWindowsTextAttributeForAnsiValue(flag, int16(value))
+				flag, err = getWindowsTextAttributeForAnsiValue(flag, term.screenBufferInfo.Attributes, int16(value))
 				if nil != err {
 					return len(command), err
 				}
