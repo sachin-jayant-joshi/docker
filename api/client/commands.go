@@ -39,6 +39,7 @@ import (
 	"github.com/docker/docker/pkg/parsers/filters"
 	"github.com/docker/docker/pkg/promise"
 	"github.com/docker/docker/pkg/signal"
+	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/term"
 	"github.com/docker/docker/pkg/timeutils"
 	"github.com/docker/docker/pkg/units"
@@ -46,7 +47,6 @@ import (
 	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
-	"github.com/docker/libtrust"
 )
 
 const (
@@ -148,36 +148,36 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 			return err
 		}
 
-		var filename string       // path to Dockerfile
-		var origDockerfile string // used for error msg
+		filename := *dockerfileName // path to Dockerfile
 
 		if *dockerfileName == "" {
 			// No -f/--file was specified so use the default
-			origDockerfile = api.DefaultDockerfileName
-			*dockerfileName = origDockerfile
+			*dockerfileName = api.DefaultDockerfileName
 			filename = path.Join(absRoot, *dockerfileName)
-		} else {
-			origDockerfile = *dockerfileName
-			if filename, err = filepath.Abs(*dockerfileName); err != nil {
-				return err
-			}
-
-			// Verify that 'filename' is within the build context
-			if !strings.HasSuffix(absRoot, string(os.PathSeparator)) {
-				absRoot += string(os.PathSeparator)
-			}
-			if !strings.HasPrefix(filename, absRoot) {
-				return fmt.Errorf("The Dockerfile (%s) must be within the build context (%s)", *dockerfileName, root)
-			}
-
-			// Now reset the dockerfileName to be relative to the build context
-			*dockerfileName = filename[len(absRoot):]
 		}
 
-		if _, err = os.Stat(filename); os.IsNotExist(err) {
-			return fmt.Errorf("Can not locate Dockerfile: %s", origDockerfile)
+		origDockerfile := *dockerfileName // used for error msg
+
+		if filename, err = filepath.Abs(filename); err != nil {
+			return err
 		}
-		var includes []string = []string{"."}
+
+		// Verify that 'filename' is within the build context
+		filename, err = symlink.FollowSymlinkInScope(filename, absRoot)
+		if err != nil {
+			return fmt.Errorf("The Dockerfile (%s) must be within the build context (%s)", origDockerfile, root)
+		}
+
+		// Now reset the dockerfileName to be relative to the build context
+		*dockerfileName, err = filepath.Rel(absRoot, filename)
+		if err != nil {
+			return err
+		}
+
+		if _, err = os.Lstat(filename); os.IsNotExist(err) {
+			return fmt.Errorf("Cannot locate Dockerfile: %s", origDockerfile)
+		}
+		var includes = []string{"."}
 
 		excludes, err := utils.ReadDockerIgnore(path.Join(root, ".dockerignore"))
 		if err != nil {
@@ -1216,25 +1216,6 @@ func (cli *DockerCli) CmdPush(args ...string) error {
 	v := url.Values{}
 	v.Set("tag", tag)
 
-	body, _, err := readBody(cli.call("GET", "/images/"+remote+"/manifest?"+v.Encode(), nil, false))
-	if err != nil {
-		return err
-	}
-
-	js, err := libtrust.NewJSONSignature(body)
-	if err != nil {
-		return err
-	}
-	err = js.Sign(cli.key)
-	if err != nil {
-		return err
-	}
-
-	signedBody, err := js.PrettySignature("signatures")
-	if err != nil {
-		return err
-	}
-
 	push := func(authConfig registry.AuthConfig) error {
 		buf, err := json.Marshal(authConfig)
 		if err != nil {
@@ -1244,7 +1225,7 @@ func (cli *DockerCli) CmdPush(args ...string) error {
 			base64.URLEncoding.EncodeToString(buf),
 		}
 
-		return cli.stream("POST", "/images/"+remote+"/push?"+v.Encode(), bytes.NewReader(signedBody), cli.out, map[string][]string{
+		return cli.stream("POST", "/images/"+remote+"/push?"+v.Encode(), nil, cli.out, map[string][]string{
 			"X-Registry-Auth": registryAuthHeader,
 		})
 	}
@@ -2634,7 +2615,12 @@ type containerStats struct {
 	err              error
 }
 
-func (s *containerStats) Collect(stream io.ReadCloser) {
+func (s *containerStats) Collect(cli *DockerCli) {
+	stream, _, err := cli.call("GET", "/containers/"+s.Name+"/stats", nil, false)
+	if err != nil {
+		s.err = err
+		return
+	}
 	defer stream.Close()
 	var (
 		previousCpu    uint64
@@ -2714,28 +2700,44 @@ func (cli *DockerCli) CmdStats(args ...string) error {
 
 	names := cmd.Args()
 	sort.Strings(names)
-	var cStats []*containerStats
-	for _, n := range names {
-		s := &containerStats{Name: n}
-		cStats = append(cStats, s)
-		stream, _, err := cli.call("GET", "/containers/"+n+"/stats", nil, false)
-		if err != nil {
-			return err
-		}
-		go s.Collect(stream)
-	}
-	w := tabwriter.NewWriter(cli.out, 20, 1, 3, ' ', 0)
-	for _ = range time.Tick(500 * time.Millisecond) {
+	var (
+		cStats []*containerStats
+		w      = tabwriter.NewWriter(cli.out, 20, 1, 3, ' ', 0)
+	)
+	printHeader := func() {
 		fmt.Fprint(cli.out, "\033[2J")
 		fmt.Fprint(cli.out, "\033[H")
 		fmt.Fprintln(w, "CONTAINER\tCPU %\tMEM USAGE/LIMIT\tMEM %\tNET I/O")
+	}
+	for _, n := range names {
+		s := &containerStats{Name: n}
+		cStats = append(cStats, s)
+		go s.Collect(cli)
+	}
+	// do a quick pause so that any failed connections for containers that do not exist are able to be
+	// evicted before we display the initial or default values.
+	time.Sleep(500 * time.Millisecond)
+	var errs []string
+	for _, c := range cStats {
+		c.mu.Lock()
+		if c.err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %s", c.Name, c.err.Error()))
+		}
+		c.mu.Unlock()
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, ", "))
+	}
+	for _ = range time.Tick(500 * time.Millisecond) {
+		printHeader()
 		toRemove := []int{}
 		for i, s := range cStats {
 			if err := s.Display(w); err != nil {
 				toRemove = append(toRemove, i)
 			}
 		}
-		for _, i := range toRemove {
+		for j := len(toRemove) - 1; j >= 0; j-- {
+			i := toRemove[j]
 			cStats = append(cStats[:i], cStats[i+1:]...)
 		}
 		if len(cStats) == 0 {

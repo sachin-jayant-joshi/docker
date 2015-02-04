@@ -387,6 +387,9 @@ func (s *TagStore) pullV2Repository(eng *engine.Engine, r *registry.Session, out
 		if err != nil {
 			return err
 		}
+		if len(tags) == 0 {
+			return registry.ErrDoesNotExist
+		}
 		for _, t := range tags {
 			if downloaded, err := s.pullV2Tag(eng, r, out, endpoint, repoInfo, t, sf, parallel, auth); err != nil {
 				return err
@@ -417,7 +420,7 @@ func (s *TagStore) pullV2Tag(eng *engine.Engine, r *registry.Session, out io.Wri
 		return false, err
 	}
 
-	manifest, verified, err := s.verifyManifest(eng, manifestBytes)
+	manifest, verified, err := s.loadManifest(eng, manifestBytes)
 	if err != nil {
 		return false, fmt.Errorf("error verifying manifest: %s", err)
 	}

@@ -64,7 +64,7 @@ This will mount the host directory, `/src/webapp`, into the container at
 `/opt/webapp`.
 
 > **Note:**
-> If the path `/opt/webapp` already exists inside the container's image, it's
+> If the path `/opt/webapp` already exists inside the container's image, its
 > contents will be replaced by the contents of `/src/webapp` on the host to stay
 > consistent with the expected behavior of `mount`
 
@@ -115,7 +115,7 @@ it.
 
 Let's create a new named container with a volume to share.
 While this container doesn't run an application, it reuses the `training/postgres`
-image so that all containers are using layers in common, saveing disk space.
+image so that all containers are using layers in common, saving disk space.
 
     $ sudo docker create -v /dbdata --name dbdata training/postgres
 

@@ -42,7 +42,9 @@ func TestValidateEndpointAmbiguousAPIVersion(t *testing.T) {
 	})
 
 	requireBasicAuthHandlerV2 := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Docker-Distribution-API-Version", "registry/2.0")
+		// This mock server supports v2.0, v2.1, v42.0, and v100.0
+		w.Header().Add("Docker-Distribution-API-Version", "registry/100.0 registry/42.0")
+		w.Header().Add("Docker-Distribution-API-Version", "registry/2.0 registry/2.1")
 		requireBasicAuthHandler.ServeHTTP(w, r)
 	})
 
@@ -65,7 +67,7 @@ func TestValidateEndpointAmbiguousAPIVersion(t *testing.T) {
 	}
 
 	if testEndpoint.Version != APIVersion1 {
-		t.Fatalf("expected endpoint to validate to %s, got %s", APIVersion1, testEndpoint.Version)
+		t.Fatalf("expected endpoint to validate to %d, got %d", APIVersion1, testEndpoint.Version)
 	}
 
 	// Make a test server which should validate as a v2 server.
@@ -85,6 +87,6 @@ func TestValidateEndpointAmbiguousAPIVersion(t *testing.T) {
 	}
 
 	if testEndpoint.Version != APIVersion2 {
-		t.Fatalf("expected endpoint to validate to %s, got %s", APIVersion2, testEndpoint.Version)
+		t.Fatalf("expected endpoint to validate to %d, got %d", APIVersion2, testEndpoint.Version)
 	}
 }

@@ -59,7 +59,7 @@ as context.
 
 # EXAMPLES
 
-## Building an image using a Dockefile located inside the current directory
+## Building an image using a Dockerfile located inside the current directory
 
 Docker images can be built using the build command and a Dockerfile:
 
@@ -91,7 +91,7 @@ no hard rules here but it is best to give the names consideration.
 
 The **-t**/**--tag** flag is used to rename an image. Here are some examples:
 
-Though it is not a good practice, image names can be arbtrary:
+Though it is not a good practice, image names can be arbitrary:
 
     docker build -t myimage .
 

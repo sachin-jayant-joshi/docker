@@ -124,15 +124,18 @@ func (r *Session) HeadV2ImageBlob(ep *Endpoint, imageName, sumType, sum string, 
 		return false, err
 	}
 	res.Body.Close() // close early, since we're not needing a body on this call .. yet?
-	switch res.StatusCode {
-	case 200:
+	switch {
+	case res.StatusCode >= 200 && res.StatusCode < 400:
 		// return something indicating no push needed
 		return true, nil
-	case 404:
+	case res.StatusCode == 401:
+		return false, errLoginRequired
+	case res.StatusCode == 404:
 		// return something indicating blob push needed
 		return false, nil
 	}
-	return false, fmt.Errorf("Failed to mount %q - %s:%s : %d", imageName, sumType, sum, res.StatusCode)
+
+	return false, utils.NewHTTPRequestError(fmt.Sprintf("Server error: %d trying head request for %s - %s:%s", res.StatusCode, imageName, sumType, sum), res)
 }
 
 func (r *Session) GetV2ImageBlob(ep *Endpoint, imageName, sumType, sum string, blobWrtr io.Writer, auth *RequestAuthorization) error {
@@ -189,7 +192,7 @@ func (r *Session) GetV2ImageBlobReader(ep *Endpoint, imageName, sumType, sum str
 		if res.StatusCode == 401 {
 			return nil, 0, errLoginRequired
 		}
-		return nil, 0, utils.NewHTTPRequestError(fmt.Sprintf("Server error: %d trying to pull %s blob", res.StatusCode, imageName), res)
+		return nil, 0, utils.NewHTTPRequestError(fmt.Sprintf("Server error: %d trying to pull %s blob - %s:%s", res.StatusCode, imageName, sumType, sum), res)
 	}
 	lenStr := res.Header.Get("Content-Length")
 	l, err := strconv.ParseInt(lenStr, 10, 64)
@@ -246,7 +249,12 @@ func (r *Session) PutV2ImageBlob(ep *Endpoint, imageName, sumType, sumStr string
 		if res.StatusCode == 401 {
 			return errLoginRequired
 		}
-		return utils.NewHTTPRequestError(fmt.Sprintf("Server error: %d trying to push %s blob", res.StatusCode, imageName), res)
+		errBody, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		log.Debugf("Unexpected response from server: %q %#v", errBody, res.Header)
+		return utils.NewHTTPRequestError(fmt.Sprintf("Server error: %d trying to push %s blob - %s:%s", res.StatusCode, imageName, sumType, sumStr), res)
 	}
 
 	return nil
@@ -272,13 +280,18 @@ func (r *Session) PutV2ImageManifest(ep *Endpoint, imageName, tagName string, ma
 	if err != nil {
 		return err
 	}
-	b, _ := ioutil.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != 200 {
+	defer res.Body.Close()
+
+	// All 2xx and 3xx responses can be accepted for a put.
+	if res.StatusCode >= 400 {
 		if res.StatusCode == 401 {
 			return errLoginRequired
 		}
-		log.Debugf("Unexpected response from server: %q %#v", b, res.Header)
+		errBody, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		log.Debugf("Unexpected response from server: %q %#v", errBody, res.Header)
 		return utils.NewHTTPRequestError(fmt.Sprintf("Server error: %d trying to push %s:%s manifest", res.StatusCode, imageName, tagName), res)
 	}
 

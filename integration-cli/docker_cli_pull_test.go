@@ -24,8 +24,9 @@ func TestPullImageWithAliases(t *testing.T) {
 		if out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "tag", "busybox", repo)); err != nil {
 			t.Fatalf("Failed to tag image %v: error %v, output %q", repos, err, out)
 		}
+		defer deleteImages(repo)
 		if out, err := exec.Command(dockerBinary, "push", repo).CombinedOutput(); err != nil {
-			t.Fatalf("Failed to push image %v: error %v, output %q", err, string(out))
+			t.Fatalf("Failed to push image %v: error %v, output %q", repo, err, string(out))
 		}
 	}
 
@@ -40,7 +41,6 @@ func TestPullImageWithAliases(t *testing.T) {
 	if out, _, err := runCommandWithOutput(pullCmd); err != nil {
 		t.Fatalf("Failed to pull %v: error %v, output %q", repoName, err, out)
 	}
-	defer deleteImages(repos[0])
 	if err := exec.Command(dockerBinary, "inspect", repos[0]).Run(); err != nil {
 		t.Fatalf("Image %v was not pulled down", repos[0])
 	}
@@ -67,7 +67,7 @@ func TestPullVerified(t *testing.T) {
 
 	// push it
 	if out, err := exec.Command(dockerBinary, "push", repo).CombinedOutput(); err != nil {
-		t.Fatalf("Failed to push image %v: error %v, output %q", err, string(out))
+		t.Fatalf("Failed to push image %v: error %v, output %q", repo, err, string(out))
 	}
 
 	// remove it locally

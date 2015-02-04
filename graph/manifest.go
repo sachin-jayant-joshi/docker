@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"path"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/engine"
@@ -15,35 +14,6 @@ import (
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/libtrust"
 )
-
-func (s *TagStore) CmdManifest(job *engine.Job) engine.Status {
-	if len(job.Args) != 1 {
-		return job.Errorf("usage: %s NAME", job.Name)
-	}
-	name := job.Args[0]
-	tag := job.Getenv("tag")
-	if tag == "" {
-		tag = "latest"
-	}
-
-	// Resolve the Repository name from fqn to endpoint + name
-	repoInfo, err := registry.ParseRepositoryInfo(name)
-	if err != nil {
-		return job.Error(err)
-	}
-
-	manifestBytes, err := s.newManifest(name, repoInfo.RemoteName, tag)
-	if err != nil {
-		return job.Error(err)
-	}
-
-	_, err = job.Stdout.Write(manifestBytes)
-	if err != nil {
-		return job.Error(err)
-	}
-
-	return engine.StatusOK
-}
 
 func (s *TagStore) newManifest(localName, remoteName, tag string) ([]byte, error) {
 	manifest := &registry.ManifestData{
@@ -93,28 +63,41 @@ func (s *TagStore) newManifest(localName, remoteName, tag string) ([]byte, error
 			}
 		}
 
-		archive, err := layer.TarLayer()
+		checksum, err := layer.GetCheckSum(s.graph.ImageRoot(layer.ID))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Error getting image checksum: %s", err)
+		}
+		if tarsum.VersionLabelForChecksum(checksum) != tarsum.Version1.String() {
+			archive, err := layer.TarLayer()
+			if err != nil {
+				return nil, err
+			}
+
+			tarSum, err := tarsum.NewTarSum(archive, true, tarsum.Version1)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := io.Copy(ioutil.Discard, tarSum); err != nil {
+				return nil, err
+			}
+
+			checksum = tarSum.Sum(nil)
+
+			// Save checksum value
+			if err := layer.SaveCheckSum(s.graph.ImageRoot(layer.ID), checksum); err != nil {
+				return nil, err
+			}
 		}
 
-		tarSum, err := tarsum.NewTarSum(archive, true, tarsum.Version1)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := io.Copy(ioutil.Discard, tarSum); err != nil {
-			return nil, err
-		}
-
-		tarId := tarSum.Sum(nil)
-
-		manifest.FSLayers = append(manifest.FSLayers, &registry.FSLayer{BlobSum: tarId})
-
-		layersSeen[layer.ID] = true
-		jsonData, err := ioutil.ReadFile(path.Join(s.graph.Root, layer.ID, "json"))
+		jsonData, err := layer.RawJson()
 		if err != nil {
 			return nil, fmt.Errorf("Cannot retrieve the path for {%s}: %s", layer.ID, err)
 		}
+
+		manifest.FSLayers = append(manifest.FSLayers, &registry.FSLayer{BlobSum: checksum})
+
+		layersSeen[layer.ID] = true
+
 		manifest.History = append(manifest.History, &registry.ManifestHistory{V1Compatibility: string(jsonData)})
 	}
 
@@ -126,7 +109,12 @@ func (s *TagStore) newManifest(localName, remoteName, tag string) ([]byte, error
 	return manifestBytes, nil
 }
 
-func (s *TagStore) verifyManifest(eng *engine.Engine, manifestBytes []byte) (*registry.ManifestData, bool, error) {
+// loadManifest loads a manifest from a byte array and verifies its content.
+// The signature must be verified or an error is returned. If the manifest
+// contains no signatures by a trusted key for the name in the manifest, the
+// image is not considered verified. The parsed manifest object and a boolean
+// for whether the manifest is verified is returned.
+func (s *TagStore) loadManifest(eng *engine.Engine, manifestBytes []byte) (*registry.ManifestData, bool, error) {
 	sig, err := libtrust.ParsePrettySignature(manifestBytes, "signatures")
 	if err != nil {
 		return nil, false, fmt.Errorf("error parsing payload: %s", err)
